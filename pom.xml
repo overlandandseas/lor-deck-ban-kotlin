@@ -101,10 +101,10 @@
                 <version>3.0.2</version>
                 <configuration>
                     <jdkVersion>1.8</jdkVersion>
-                    <appName>javalin-heroku-example</appName>
+                    <appName>lor-deck-ban-backend</appName>
                     <processTypes>
                         <!-- Tell Heroku how to launch your application -->
-                        <web>java -jar ./target/lor-deck-ban-server-1.0-jar-with-dependencies.jar</web>
+                        <web>java -jar ./target/lor-deck-ban-backend-1.0-jar-with-dependencies.jar</web>
                     </processTypes>
                 </configuration>
             </plugin>
