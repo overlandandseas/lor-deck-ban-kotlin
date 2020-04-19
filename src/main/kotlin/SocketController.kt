@@ -11,7 +11,7 @@ private val redis = Redis.instance
 object SocketController {
 
     fun onConnect(ctx: WsConnectContext) {
-        val roomId = ctx.pathParam("roomId")
+        val roomId = ctx.pathParam("room-id")
         if (playerSessionMap.containsKey(roomId))
             playerSessionMap[roomId]?.add(ctx)
         else
@@ -20,13 +20,13 @@ object SocketController {
         val connected = redis.hincrBy(roomId, "connected", 1).toInt()
         sendAll(roomId, "Connected: $connected")
 
-        ctx.send(
-            when (connected) {
-                1 -> "NEW_LOBBY"
-                2 -> "LOBBY_FOUND"
-                else -> "LOBBY_FULL"
-            }
-        )
+        val roomState = when (connected) {
+            1 -> "NEW_LOBBY"
+            2 -> "LOBBY_FOUND"
+            else -> "LOBBY_FULL"
+        }
+
+        ctx.send(roomState)
 
         val numberOfDecks = redis.hget(roomId, "numberOfDecks").toInt()
         val numberOfBans = redis.hget(roomId, "numberOfBans").toInt()
@@ -37,7 +37,7 @@ object SocketController {
     }
 
     fun onMessage(ctx: WsMessageContext) {
-        val roomId = ctx.pathParam("roomId")
+        val roomId = ctx.pathParam("room-id")
         val splitMsg = ctx.message().split(":")
 
         val action = splitMsg[0]
@@ -68,7 +68,7 @@ object SocketController {
                 banDeck(roomId, role, data)
                 sendAll(roomId, "BAN_SUBMITTED:$role")
 
-                if(allBanned(roomId)) {
+                if (allBanned(roomId)) {
                     val bannedDecks = redis.hmget(roomId, "BAN_DECK:HOST", "BAN_DECK:GUEST")
                     bannedDecks.forEach {
                         sendAll(roomId, "BANNED:HOST:$it")
@@ -79,12 +79,12 @@ object SocketController {
     }
 
     fun onClose(ctx: WsCloseContext) {
-        val roomId = ctx.pathParam("roomId")
+        val roomId = ctx.pathParam("room-id")
         val connected = redis.hincrBy(roomId, "connected", -1).toInt()
         sendAll(roomId, "Connected: $connected")
         playerSessionMap[roomId]?.remove(ctx)
-        if(connected == 0) {
-          redis.hdel(roomId)
+        if (connected == 0) {
+            redis.hdel(roomId)
         }
     }
 }

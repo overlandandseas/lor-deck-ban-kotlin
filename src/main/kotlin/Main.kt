@@ -32,7 +32,7 @@ fun main(args: Array<String>) {
 
     }
     app.apply {
-        ws("/websocket/:room_id") { ws ->
+        ws("/websocket/:room-id") { ws ->
             ws.onConnect(SocketController::onConnect)
             ws.onMessage(SocketController::onMessage)
             ws.onClose(SocketController::onClose)
