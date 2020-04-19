@@ -14,7 +14,7 @@ fun main(args: Array<String>) {
     val port = System.getenv("PORT")?.toInt() ?: 7000
 
     val app = Javalin.create()
-    app.get("/") { ctx -> ctx.result("It's cool dude, everything's cool") }
+    app.get("/") { ctx -> ctx.result("Hey all you cool cats and kittens") }
     app.post("/") { ctx ->
 
         val roomIdLength = ctx.queryParam<Int>("roomIdLength").get()
