@@ -1,9 +1,15 @@
+import com.google.gson.Gson
 import io.javalin.Javalin
-import redis.clients.jedis.Jedis
+
+data class Lobby(val numberOfDecks: Int = 3, val numberOfBans: Int = 1) {
+    fun toJson() {
+        Gson().toJson(this)
+    }
+}
 
 fun main(args: Array<String>) {
 
-    val redis = Jedis("localhost");
+    val redis = Redis.instance
 
     val app =  Javalin.create ()
     app.get("/") { ctx -> ctx.result("It's cool dude, everything's cool")}
@@ -15,7 +21,6 @@ fun main(args: Array<String>) {
         while (redis.exists(roomId)) {
             roomId = getRandomRoomId(roomIdLength)
         }
-
         val lobby = ctx.bodyAsClass(Lobby::class.java)
 
         redis.hset(roomId, "numberOfDecks", lobby.numberOfDecks.toString())
@@ -26,9 +31,9 @@ fun main(args: Array<String>) {
     }
     app.apply {
         ws("/websocket/:room_id") { ws  ->
-            ws.onConnect(PlayerController::onConnect)
-            ws.onMessage(PlayerController::onMessage)
-            ws.onClose(PlayerController::onClose)
+            ws.onConnect(SocketController::onConnect)
+            ws.onMessage(SocketController::onMessage)
+            ws.onClose(SocketController::onClose)
         }
     }
 

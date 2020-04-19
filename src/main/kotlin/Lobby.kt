@@ -1,1 +1,0 @@
-data class Lobby(val numberOfDecks: Int = 0, val numberOfBans: Int = 0)
