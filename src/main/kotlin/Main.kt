@@ -11,9 +11,9 @@ fun main(args: Array<String>) {
 
     val redis = Redis.instance
 
-    val app =  Javalin.create ()
-    app.get("/") { ctx -> ctx.result("It's cool dude, everything's cool")}
-    app.post("/") {ctx ->
+    val app = Javalin.create()
+    app.get("/") { ctx -> ctx.result("It's cool dude, everything's cool") }
+    app.post("/") { ctx ->
 
         val roomIdLength = ctx.queryParam<Int>("roomIdLength").get()
 
@@ -30,7 +30,7 @@ fun main(args: Array<String>) {
 
     }
     app.apply {
-        ws("/websocket/:room_id") { ws  ->
+        ws("/websocket/:room_id") { ws ->
             ws.onConnect(SocketController::onConnect)
             ws.onMessage(SocketController::onMessage)
             ws.onClose(SocketController::onClose)
@@ -41,4 +41,4 @@ fun main(args: Array<String>) {
 }
 
 fun getRandomRoomId(roomIdLength: Int): String =
-        (0..roomIdLength).map { (65 + Math.random() * 26).toChar()}.joinToString("")
+    (0..roomIdLength).map { (65 + Math.random() * 26).toChar() }.joinToString("")
