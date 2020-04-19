@@ -11,6 +11,8 @@ fun main(args: Array<String>) {
 
     val redis = Redis.instance
 
+    val port = System.getenv("PORT")?.toInt() ?: 7000
+
     val app = Javalin.create()
     app.get("/") { ctx -> ctx.result("It's cool dude, everything's cool") }
     app.post("/") { ctx ->
@@ -37,8 +39,10 @@ fun main(args: Array<String>) {
         }
     }
 
-    app.start(7000)
+
+    app.start(port)
 }
+
 
 fun getRandomRoomId(roomIdLength: Int): String =
     (0..roomIdLength).map { (65 + Math.random() * 26).toChar() }.joinToString("")
