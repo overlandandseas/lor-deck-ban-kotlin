@@ -2,7 +2,6 @@ import io.javalin.websocket.WsCloseContext
 import io.javalin.websocket.WsConnectContext
 import io.javalin.websocket.WsContext
 import io.javalin.websocket.WsMessageContext
-import redis.clients.jedis.Jedis
 import java.util.concurrent.ConcurrentHashMap
 
 
@@ -12,14 +11,19 @@ const val DELIMITER = ';'
 
 object SocketController {
 
-    fun onConnect(ctx: WsConnectContext, redis: Jedis) {
+    fun onConnect(ctx: WsConnectContext) {
         val roomId = ctx.pathParam("room-id")
+
+        val lobby = LOBBY_MAP[roomId] ?: createNew(roomId)
+
         if (playerSessionMap.containsKey(roomId))
             playerSessionMap[roomId]?.add(ctx)
         else
             playerSessionMap[roomId] = arrayListOf(ctx as WsContext)
 
-        val connected = redis.hincrBy(roomId, "connected", 1).toInt()
+        lobby.connected++
+        val connected = lobby.connected
+
         sendAll(roomId, "CONNECTED$DELIMITER$connected")
 
         val roomState = when (connected) {
@@ -30,31 +34,34 @@ object SocketController {
 
         ctx.send(roomState)
 
-        val numberOfDecks = redis.hget(roomId, "numberOfDecks")?.toInt() ?: 3
-        val numberOfBans = redis.hget(roomId, "numberOfBans")?.toInt() ?: 1
-        val lobbyJson = Lobby(numberOfDecks, numberOfBans).toJson()
+        val lobbyJson = lobby.lobbyNumbers.toJson()
 
         ctx.send("ROOM_INFO$DELIMITER$lobbyJson")
 
-        if (allDecksSubmitted(roomId, redis)) {
-            val decks = redis.hmget(roomId, "DECKS_HOST", "DECKS_GUEST")
+        if (allDecksSubmitted(lobby)) {
+            val hostDecks = lobby.hostDecks
+            val guestDecks = lobby.guestDecks
 
-            sendAll(roomId, "DECKS${DELIMITER}HOST$DELIMITER${decks[0]}")
-            sendAll(roomId, "DECKS${DELIMITER}GUEST$DELIMITER${decks[1]}")
+            sendAll(roomId, "DECKS${DELIMITER}HOST$DELIMITER${hostDecks}")
+            sendAll(roomId, "DECKS${DELIMITER}GUEST$DELIMITER${guestDecks}")
         }
 
-        if (allBanned(roomId, redis)) {
-            val bannedDecks = redis.hmget(roomId, "BAN_HOST", "BAN_GUEST")
+        if (allBanned(lobby)) {
 
-            sendAll(roomId, "BANNED${DELIMITER}HOST$DELIMITER${bannedDecks[0]}")
-            sendAll(roomId, "BANNED${DELIMITER}GUEST$DELIMITER${bannedDecks[1]}")
+            val hostBans = lobby.hostBans
+            val guestBans = lobby.guestBans
+
+            sendAll(roomId, "BANNED${DELIMITER}HOST$DELIMITER${hostBans}")
+            sendAll(roomId, "BANNED${DELIMITER}GUEST$DELIMITER${guestBans}")
         }
 
     }
 
-    fun onMessage(ctx: WsMessageContext, redis: Jedis) {
+    fun onMessage(ctx: WsMessageContext) {
         val roomId = ctx.pathParam("room-id")
         val splitMsg = ctx.message().split(DELIMITER)
+
+        val lobby = LOBBY_MAP[roomId] ?: createNew(roomId)
 
         val action = splitMsg[0]
         val role = if (splitMsg.size > 1) splitMsg[1] else "default_role"
@@ -65,30 +72,31 @@ object SocketController {
             // When a player submit's their decks, alert everyone, check to see if all have been submitted
             // and submit all of those to everyone
             "DECK_SUBMIT" -> {
-                submitDecks(roomId, role, data, redis)
+                submitDecks(lobby, role, data)
                 sendAll(roomId, "DECK_SUBMITTED$DELIMITER$role")
 
-                if (allDecksSubmitted(roomId, redis)) {
-                    val decks = redis.hmget(roomId, "DECKS_HOST", "DECKS_GUEST")
+                if (allDecksSubmitted(lobby)) {
+                    val hostDecks = lobby.hostDecks
+                    val guestDecks = lobby.guestDecks
 
-                    sendAll(roomId, "DECKS${DELIMITER}HOST$DELIMITER${decks[0]}")
-                    sendAll(roomId, "DECKS${DELIMITER}GUEST$DELIMITER${decks[1]}")
-
+                    sendAll(roomId, "DECKS${DELIMITER}HOST$DELIMITER${hostDecks}")
+                    sendAll(roomId, "DECKS${DELIMITER}GUEST$DELIMITER${guestDecks}")
                 }
             }
 
             // When a ban is submitted from a player, alert everyone and check if all have been submitted
             // then alert everyone again
             "BAN_SUBMIT" -> {
-                banDeck(roomId, role, data, redis)
+                banDeck(lobby, role, data)
                 sendAll(roomId, "BAN_SUBMITTED$DELIMITER$role")
 
-                if (allBanned(roomId, redis)) {
-                    val bannedDecks = redis.hmget(roomId, "BAN_HOST", "BAN_GUEST")
+                if (allBanned(lobby)) {
 
-                    sendAll(roomId, "BANNED${DELIMITER}HOST$DELIMITER${bannedDecks[0]}")
-                    sendAll(roomId, "BANNED${DELIMITER}GUEST$DELIMITER${bannedDecks[1]}")
+                    val hostBans = lobby.hostBans
+                    val guestBans = lobby.guestBans
 
+                    sendAll(roomId, "BANNED${DELIMITER}HOST$DELIMITER${hostBans}")
+                    sendAll(roomId, "BANNED${DELIMITER}GUEST$DELIMITER${guestBans}")
                 }
             }
             "PING" -> {
@@ -100,33 +108,51 @@ object SocketController {
         }
     }
 
-    fun onClose(ctx: WsCloseContext, redis: Jedis) {
+    fun onClose(ctx: WsCloseContext) {
+
         val roomId = ctx.pathParam("room-id")
-        val connected = redis.hincrBy(roomId, "connected", -1).toInt()
+        val lobby = LOBBY_MAP[roomId] ?: createNew(roomId)
+
+        lobby.connected--
+        val connected = lobby.connected
+
         sendAll(roomId, "CONNECTED$DELIMITER$connected")
         playerSessionMap[roomId]?.remove(ctx)
-        redis.close()
-//        if (connected == 0) {
-//            redis.del(roomId)
-//        }
+
+        if (connected == 0 && allBanned(lobby)) LOBBY_MAP.remove(roomId)
     }
 }
 
-private fun submitDecks(roomId: String, role: String, decks: String, redis: Jedis) {
-    redis.hset(roomId, "DECKS_$role", decks)
+private fun submitDecks(lobby: Lobby, role: String, decks: String) {
+    when (role) {
+        "HOST" -> lobby.hostDecks = decks
+        "GUEST" -> lobby.guestDecks = decks
+    }
 }
 
 private fun sendAll(roomId: String, message: String) {
     playerSessionMap[roomId]?.filter { it.session.isOpen }?.forEach { it.send(message) }
 }
 
-private fun allDecksSubmitted(roomId: String, redis: Jedis): Boolean {
-    return redis.hexists(roomId, "DECKS_HOST") && redis.hexists(roomId, "DECKS_GUEST")
+private fun allDecksSubmitted(lobby: Lobby): Boolean {
+    return lobby.hostDecks !== null && lobby.guestDecks !== null
 }
 
-private fun banDeck(roomId: String, role: String, bannedDeck: String, redis: Jedis) {
-    redis.hset(roomId, "BAN_$role", bannedDeck)
+
+private fun banDeck(lobby: Lobby, role: String, bannedDeck: String) {
+    when (role) {
+        "HOST" -> lobby.hostBans = bannedDeck
+        "GUEST" -> lobby.guestBans = bannedDeck
+    }
 }
 
-private fun allBanned(roomId: String, redis: Jedis): Boolean =
-    redis.hexists(roomId, "BAN_HOST") && redis.hexists(roomId, "BAN_GUEST")
+private fun allBanned(lobby: Lobby): Boolean {
+    return lobby.hostBans !== null && lobby.guestBans !== null
+}
+
+
+private fun createNew(roomId: String): Lobby {
+    val lobby = Lobby(LobbyNumbers())
+    LOBBY_MAP[roomId] = lobby
+    return lobby
+}
