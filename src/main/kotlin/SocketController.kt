@@ -8,6 +8,8 @@ import java.util.concurrent.ConcurrentHashMap
 private val playerSessionMap = ConcurrentHashMap<String, ArrayList<WsContext>>()
 private val redis = Redis.instance
 
+const val DELIMITER = ';'
+
 object SocketController {
 
     fun onConnect(ctx: WsConnectContext) {
@@ -18,7 +20,7 @@ object SocketController {
             playerSessionMap[roomId] = arrayListOf(ctx as WsContext)
 
         val connected = redis.hincrBy(roomId, "connected", 1).toInt()
-        sendAll(roomId, "Connected: $connected")
+        sendAll(roomId, "CONNECTED$DELIMITER$connected")
 
         val roomState = when (connected) {
             1 -> "NEW_LOBBY"
@@ -28,37 +30,50 @@ object SocketController {
 
         ctx.send(roomState)
 
-        val numberOfDecks = redis.hget(roomId, "numberOfDecks").toInt()
-        val numberOfBans = redis.hget(roomId, "numberOfBans").toInt()
+        val numberOfDecks = redis.hget(roomId, "numberOfDecks")?.toInt() ?: 3
+        val numberOfBans = redis.hget(roomId, "numberOfBans")?.toInt() ?: 1
         val lobbyJson = Lobby(numberOfDecks, numberOfBans).toJson()
 
-        ctx.send("ROOM_INFO:$lobbyJson")
+        ctx.send("ROOM_INFO$DELIMITER$lobbyJson")
+
+        if (allDecksSubmitted(roomId)) {
+            val decks = redis.hmget(roomId, "DECKS_HOST", "DECKS_GUEST")
+
+            sendAll(roomId, "DECKS${DELIMITER}HOST$DELIMITER${decks[0]}")
+            sendAll(roomId, "DECKS${DELIMITER}GUEST$DELIMITER${decks[1]}")
+        }
+
+        if (allBanned(roomId)) {
+            val bannedDecks = redis.hmget(roomId, "BAN_HOST", "BAN_GUEST")
+
+            sendAll(roomId, "BANNED${DELIMITER}HOST$DELIMITER${bannedDecks[0]}")
+            sendAll(roomId, "BANNED${DELIMITER}GUEST$DELIMITER${bannedDecks[1]}")
+        }
 
     }
 
     fun onMessage(ctx: WsMessageContext) {
         val roomId = ctx.pathParam("room-id")
-        val splitMsg = ctx.message().split(":")
+        val splitMsg = ctx.message().split(DELIMITER)
 
         val action = splitMsg[0]
-        val role = splitMsg[1]
-        val data = splitMsg[2]
+        val role = if (splitMsg.size > 1) splitMsg[1] else "default_role"
+        val data = if (splitMsg.size > 2) splitMsg[2] else "default_data"
 
         when (action) {
 
             // When a player submit's their decks, alert everyone, check to see if all have been submitted
             // and submit all of those to everyone
             "DECK_SUBMIT" -> {
-                submitDecks(roomId, role, data.split("|"))
-                sendAll(roomId, "DECK_SUBMITTED:$role")
-                val numberOfDecks = redis.hget(roomId, "numberOfDecks").toInt()
-                if (allDecksSubmitted(roomId, numberOfDecks)) {
+                submitDecks(roomId, role, data)
+                sendAll(roomId, "DECK_SUBMITTED$DELIMITER$role")
 
-                    val hostDecks = redis.hmget(roomId, *(0..numberOfDecks).map { "HOST_deck$it" }.toTypedArray())
-                    val guestDecks = redis.hmget(roomId, *(0..numberOfDecks).map { "GUEST_deck$it" }.toTypedArray())
+                if (allDecksSubmitted(roomId)) {
+                    val decks = redis.hmget(roomId, "DECKS_HOST", "DECKS_GUEST")
 
-                    sendAll(roomId, "DECKS:HOST:${hostDecks.joinToString("|")}")
-                    sendAll(roomId, "DECKS:GUEST:${guestDecks.joinToString("|")}")
+                    sendAll(roomId, "DECKS${DELIMITER}HOST$DELIMITER${decks[0]}")
+                    sendAll(roomId, "DECKS${DELIMITER}GUEST$DELIMITER${decks[1]}")
+
                 }
             }
 
@@ -66,14 +81,21 @@ object SocketController {
             // then alert everyone again
             "BAN_SUBMIT" -> {
                 banDeck(roomId, role, data)
-                sendAll(roomId, "BAN_SUBMITTED:$role")
+                sendAll(roomId, "BAN_SUBMITTED$DELIMITER$role")
 
                 if (allBanned(roomId)) {
-                    val bannedDecks = redis.hmget(roomId, "BAN_DECK:HOST", "BAN_DECK:GUEST")
-                    bannedDecks.forEach {
-                        sendAll(roomId, "BANNED:HOST:$it")
-                    }
+                    val bannedDecks = redis.hmget(roomId, "BAN_HOST", "BAN_GUEST")
+
+                    sendAll(roomId, "BANNED${DELIMITER}HOST$DELIMITER${bannedDecks[0]}")
+                    sendAll(roomId, "BANNED${DELIMITER}GUEST$DELIMITER${bannedDecks[1]}")
+
                 }
+            }
+            "PING" -> {
+                ctx.send("PONG")
+            }
+            else -> {
+                println("Unknown Request")
             }
         }
     }
@@ -81,32 +103,29 @@ object SocketController {
     fun onClose(ctx: WsCloseContext) {
         val roomId = ctx.pathParam("room-id")
         val connected = redis.hincrBy(roomId, "connected", -1).toInt()
-        sendAll(roomId, "Connected: $connected")
+        sendAll(roomId, "CONNECTED$DELIMITER$connected")
         playerSessionMap[roomId]?.remove(ctx)
-        if (connected == 0) {
-            redis.hdel(roomId)
-        }
+//        if (connected == 0) {
+//            redis.del(roomId)
+//        }
     }
 }
 
-private fun submitDecks(roomId: String, role: String, decks: List<String>) {
-    val deckMap = decks.mapIndexed { idx, value ->
-        Pair("${role}_deck$idx", value)
-    }.toMap()
-    redis.hmset(roomId, deckMap)
+private fun submitDecks(roomId: String, role: String, decks: String) {
+    redis.hset(roomId, "DECKS_$role", decks)
 }
 
 private fun sendAll(roomId: String, message: String) {
     playerSessionMap[roomId]?.filter { it.session.isOpen }?.forEach { it.send(message) }
 }
 
-private fun allDecksSubmitted(roomId: String, numberOfDecks: Int): Boolean = (0..numberOfDecks).all {
-    redis.hexists(roomId, "HOST_deck$it")
+private fun allDecksSubmitted(roomId: String): Boolean {
+    return redis.hexists(roomId, "DECKS_HOST") && redis.hexists(roomId, "DECKS_GUEST")
 }
 
 private fun banDeck(roomId: String, role: String, bannedDeck: String) {
-    redis.hset(roomId, "BAN_DECK:$role", bannedDeck)
+    redis.hset(roomId, "BAN_$role", bannedDeck)
 }
 
 private fun allBanned(roomId: String): Boolean =
-    redis.hexists(roomId, "BAN_DECK:HOST") && redis.hexists(roomId, "BAN_DECK:GUEST")
+    redis.hexists(roomId, "BAN_HOST") && redis.hexists(roomId, "BAN_GUEST")
