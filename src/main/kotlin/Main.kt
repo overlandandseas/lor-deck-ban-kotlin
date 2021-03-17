@@ -1,4 +1,7 @@
+import controller.RoomController
+import controller.SocketController
 import io.javalin.Javalin
+import java.util.*
 
 
 fun main(args: Array<String>) {
@@ -8,33 +11,27 @@ fun main(args: Array<String>) {
     val app = Javalin.create { config ->
         config.enableCorsForAllOrigins()
     }
-    app.get("/") { ctx -> ctx.result("Hey all you cool cats and kittens") }
-    app.post("/") { ctx ->
 
-        val roomIdLength = ctx.queryParam("roomIdLength", "4")?.toInt() ?: 4
 
-        var roomId = getRandomRoomId(roomIdLength)
-        while (LOBBY_MAP.containsKey(roomId)) {
-            roomId = getRandomRoomId(roomIdLength)
-        }
-        val lobbyNumbers = ctx.bodyAsClass(LobbyNumbers::class.java)
-
-        LOBBY_MAP[roomId] = Lobby(lobbyNumbers)
-
-        ctx.result(roomId)
-    }
+    /**
+     * New Runeterraban Endpoints
+     */
     app.apply {
-        ws("/websocket/:room-id") { ws ->
+        post("/room", RoomController::createRoom)
+
+        get("/user") { ctx ->
+            val userId = UUID.randomUUID().toString()
+            ctx.result(userId)
+        }
+
+        ws("/websocket/:room-name/:user") { ws ->
             ws.onConnect(SocketController::onConnect)
             ws.onMessage(SocketController::onMessage)
             ws.onClose(SocketController::onClose)
         }
+
     }
 
-
     app.start(port)
+
 }
-
-
-fun getRandomRoomId(roomIdLength: Int): String =
-    (0 until roomIdLength).map { (65 + Math.random() * 26).toChar() }.joinToString("")
