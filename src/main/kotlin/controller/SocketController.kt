@@ -24,8 +24,8 @@ object SocketController {
             RoomClient.connect(roomName, userId, ctx)
         } catch (e: Exception) {
             when (e) {
-                is RoomNotFoundException -> print("Room not found")
-                is RoomIsFullException -> print("Room is full")
+                is RoomNotFoundException -> println("Room not found")
+                is RoomIsFullException -> println("Room is full")
             }
         }
 

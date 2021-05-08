@@ -1,5 +1,6 @@
 package client
 
+import PlayerAlreadySubmittedBansException
 import PlayerAlreadySubmittedDecksException
 import PlayerNotFoundException
 import RoomAlreadyExistsException
@@ -64,8 +65,14 @@ object RoomClient {
             existingPlayer.ctx = ctx
             existingPlayer.connected = true
         } else {
-            val player = Player(decks = mutableListOf(), bans = mutableListOf(), ctx = ctx, connected = true)
-            room.players[user] = player
+            room.players[user]?.let {
+                it.ctx = ctx
+                it.connected = true
+            } ?: run {
+                val player = Player(decks = mutableListOf(), bans = mutableListOf(), ctx = ctx, connected = true)
+                room.players[user] = player
+            }
+
         }
         updateRoomStateToPlayers(room)
     }
@@ -111,7 +118,7 @@ object RoomClient {
         val room = RoomDAO.findByName(name) ?: throw RoomNotFoundException("Room $name not found")
 
         val player = room.players[user] ?: throw PlayerNotFoundException("Player not found in room $name")
-        if (player.decks.isNotEmpty()) throw PlayerAlreadySubmittedDecksException("Player already submitted bans")
+        if (player.bans.isNotEmpty()) throw PlayerAlreadySubmittedBansException("Player already submitted bans")
 
         player.bans = bans
 
